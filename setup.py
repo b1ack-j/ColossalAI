@@ -2,7 +2,7 @@ import os
 import sys
 from typing import List
 
-from setuptools import find_packages, setup
+from setuptools import find_namespace_packages, setup
 
 try:
     import torch  # noqa
@@ -100,20 +100,8 @@ package_name = "colossalai"
 setup(
     name=package_name,
     version=version,
-    packages=find_packages(
-        exclude=(
-            "extensions",
-            "benchmark",
-            "docker",
-            "tests",
-            "docs",
-            "examples",
-            "tests",
-            "scripts",
-            "requirements",
-            "*.egg-info",
-        ),
-    ),
+    # Some public modules, including autochunk and legacy.moe, use namespace packages.
+    packages=find_namespace_packages(include=("colossalai", "colossalai.*"), exclude=("*.__pycache__",)),
     description="An integrated large-scale model training system with efficient parallelization techniques",
     long_description=fetch_readme(),
     long_description_content_type="text/markdown",

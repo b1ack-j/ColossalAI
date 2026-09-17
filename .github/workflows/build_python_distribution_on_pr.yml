@@ -1,0 +1,51 @@
+name: Build Python and JIT distributions
+
+on:
+  pull_request:
+    paths:
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'version.txt'
+      - 'requirements/**'
+      - 'extensions/**'
+      - 'colossalai/**'
+      - '.github/workflows/build_python_distribution_on_pr.yml'
+      - '.github/workflows/release_*pypi*.yml'
+      - '.github/workflows/release_nightly_on_schedule.yml'
+      - '.github/workflows/scripts/build_python_distribution.py'
+      - '.github/workflows/scripts/update_setup_for_nightly.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        distribution: ['stable']
+        include:
+          - python-version: '3.12'
+            distribution: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install fixed build tools
+        run: python -m pip install -r requirements/requirements-build.txt
+      - name: Prepare nightly package in the job checkout
+        if: matrix.distribution == 'nightly'
+        run: python .github/workflows/scripts/update_setup_for_nightly.py
+      - name: Build, inspect and install Python/JIT distributions
+        env:
+          BUILD_EXT: '0'
+        run: python .github/workflows/scripts/build_python_distribution.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions-${{ matrix.distribution }}-${{ matrix.python-version }}
+          path: dist/*
+          if-no-files-found: error
