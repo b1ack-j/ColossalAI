@@ -12,7 +12,7 @@
 
 ## 从PyPI上安装
 
-你可以PyPI上使用以下命令直接安装Colossal-AI。
+标准 wheel 包含 Python 代码和扩展源码，不包含提前编译的 CUDA 扩展。可以使用以下命令安装 Colossal-AI：
 
 ```shell
 pip install colossalai
@@ -20,11 +20,15 @@ pip install colossalai
 
 **注：现在只支持Linux。**
 
-如果你想同时安装PyTorch扩展的话，可以添加`BUILD_EXT=1`。如果不添加的话，PyTorch扩展会在运行时自动安装。
+如果要在安装时编译 PyTorch 扩展，请先安装受支持的 CUDA 版 PyTorch、与其匹配的 CUDA Toolkit、C++ 编译器，以及 Python 构建工具（`setuptools`、`wheel`、`ninja`、`packaging`）。使用构建时可以访问目标 GPU 的 Linux 环境，然后明确选择源码包：
 
 ```shell
-BUILD_EXT=1 pip install colossalai
+BUILD_EXT=1 pip install --no-binary=colossalai --no-build-isolation colossalai
 ```
+
+`BUILD_EXT=1` 不会重新编译下载好的 wheel。`--no-binary=colossalai` 用于选择源码包，`--no-build-isolation` 让构建过程使用已经安装的 PyTorch。如果已经安装了 ColossalAI，请先卸载，再切换为源码构建。
+
+不提前编译时，需要的扩展会在首次使用时编译。这同样需要上述开发工具；安装包成功不代表已经验证了 GPU 执行。
 
 ## 从源安装
 
@@ -38,29 +42,13 @@ cd ColossalAI
 pip install -r requirements/requirements.txt
 
 # install colossalai
-BUILD_EXT=1 pip install .
+BUILD_EXT=1 pip install --no-build-isolation .
 ```
 
-如果您不想安装和启用 CUDA 内核融合（使用融合优化器时强制安装），您可以不添加`BUILD_EXT=1`：
+如果希望把扩展编译推迟到首次使用，可以不设置 `BUILD_EXT`。这不会禁用融合算子，也不会消除其编译环境要求：
 
 ```shell
 pip install .
-```
-
-如果您在使用CUDA 10.2，您仍然可以从源码安装ColossalAI。但是您需要手动下载cub库并将其复制到相应的目录。
-
-```bash
-# clone the repository
-git clone https://github.com/hpcaitech/ColossalAI.git
-cd ColossalAI
-
-# download the cub library
-wget https://github.com/NVIDIA/cub/archive/refs/tags/1.8.0.zip
-unzip 1.8.0.zip
-cp -r cub-1.8.0/cub/ colossalai/kernel/cuda_native/csrc/kernels/include/
-
-# install
-BUILD_EXT=1 pip install .
 ```
 
 <!-- doc-test-command: echo "installation.md does not need test" -->

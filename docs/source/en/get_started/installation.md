@@ -12,7 +12,7 @@ If you encounter any problem about installation, you may want to raise an [issue
 
 ## Download From PyPI
 
-You can install Colossal-AI with
+The standard wheel contains Python code and extension sources, without precompiled CUDA extensions. Install it with
 
 ```shell
 pip install colossalai
@@ -20,12 +20,16 @@ pip install colossalai
 
 **Note: only Linux is supported for now**
 
-If you want to build PyTorch extensions during installation, you can use the command below. Otherwise, the PyTorch extensions will be built during runtime.
+To compile PyTorch extensions during installation, first install a supported CUDA-enabled PyTorch version, a matching CUDA Toolkit, a C++ compiler, and the Python build tools (`setuptools`, `wheel`, `ninja`, and `packaging`). Use a Linux environment where the build can access the target GPU. Then explicitly select the source distribution:
 
 ```shell
-BUILD_EXT=1 pip install colossalai
+BUILD_EXT=1 pip install --no-binary=colossalai --no-build-isolation colossalai
 ```
 
+
+`BUILD_EXT=1` does not rebuild a downloaded wheel. `--no-binary=colossalai` selects source, and `--no-build-isolation` allows the build to use your installed PyTorch. If ColossalAI is already installed, uninstall it before switching to a source build.
+
+Without ahead-of-time compilation, extensions are compiled on first use when needed. This requires the same development tools; successful installation alone does not verify GPU execution.
 
 ## Download From Source
 
@@ -39,29 +43,13 @@ cd ColossalAI
 pip install -r requirements/requirements.txt
 
 # install colossalai
-BUILD_EXT=1 pip install .
+BUILD_EXT=1 pip install --no-build-isolation .
 ```
 
-If you don't want to install and enable CUDA kernel fusion (compulsory installation when using fused optimizer), just don't specify the `BUILD_EXT`:
+To defer extension compilation until first use, omit `BUILD_EXT`. This does not disable fused operators or remove their build requirements:
 
 ```shell
 pip install .
-```
-
-For Users with CUDA 10.2, you can still build ColossalAI from source. However, you need to manually download the cub library and copy it to the corresponding directory.
-
-```bash
-# clone the repository
-git clone https://github.com/hpcaitech/ColossalAI.git
-cd ColossalAI
-
-# download the cub library
-wget https://github.com/NVIDIA/cub/archive/refs/tags/1.8.0.zip
-unzip 1.8.0.zip
-cp -r cub-1.8.0/cub/ colossalai/kernel/cuda_native/csrc/kernels/include/
-
-# install
-BUILD_EXT=1 pip install .
 ```
 
 <!-- doc-test-command: echo "installation.md does not need test" -->

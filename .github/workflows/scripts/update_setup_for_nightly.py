@@ -8,12 +8,9 @@ def open_setup_file():
 
 
 def replace_nightly_package_info(file_lines):
-    version = datetime.today().strftime("%Y.%m.%d")
     package_name = "colossalai-nightly"
 
     for idx, line in enumerate(file_lines):
-        if "version = get_version()" in line:
-            file_lines[idx] = f'version = "{version}"\n'
         if 'package_name = "colossalai"' in line:
             file_lines[idx] = f'package_name = "{package_name}"\n'
     return file_lines
@@ -28,6 +25,9 @@ def main():
     file_lines = open_setup_file()
     file_lines = replace_nightly_package_info(file_lines)
     write_setup_file(file_lines)
+    # Keep setup.py's get_version() call so the runtime version module is generated.
+    with open("version.txt", "w") as f:
+        f.write(datetime.today().strftime("%Y.%m.%d") + "\n")
 
 
 if __name__ == "__main__":

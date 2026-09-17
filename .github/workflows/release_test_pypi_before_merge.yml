@@ -27,9 +27,13 @@ jobs:
         echo $new_version > ./version.txt
         echo "version=$new_version" >> $GITHUB_OUTPUT
 
-    - run: |
-        pip install --upgrade pip
-        python setup.py sdist build
+    - name: Install fixed build tools
+      run: python -m pip install -r requirements/requirements-build.txt
+
+    - name: Build and verify Python/JIT distributions
+      env:
+        BUILD_EXT: '0'
+      run: python .github/workflows/scripts/build_python_distribution.py
 
     # publish to PyPI if executed on the main branch
     - name: Publish package to PyPI
@@ -49,7 +53,6 @@ jobs:
         # we need to install the requirements.txt first
         # as test-pypi may not contain the distributions for libs listed in the txt file
         pip install -r requirements/requirements.txt
-        pip install -U setuptools==68.2.2 wheel
-        pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.python.org/pypi colossalai==$VERSION
+        pip install --only-binary=colossalai --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.python.org/pypi colossalai==$VERSION
       env:
         VERSION: ${{ steps.prep-version.outputs.version }}
