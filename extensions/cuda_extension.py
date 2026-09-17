@@ -11,8 +11,8 @@ from .utils import check_pytorch_version, check_system_pytorch_cuda_match, set_c
 __all__ = ["_CudaExtension"]
 
 # Some constants for installation checks
-MIN_PYTORCH_VERSION_MAJOR = 1
-MIN_PYTORCH_VERSION_MINOR = 10
+MIN_PYTORCH_VERSION_MAJOR = 2
+MIN_PYTORCH_VERSION_MINOR = 2
 
 
 class _CudaExtension(_CppExtension):
