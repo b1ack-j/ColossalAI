@@ -36,14 +36,23 @@ class _CudaExtension(_CppExtension):
         return cuda_available
 
     def assert_compatible(self) -> None:
+        # A prebuilt extension needs the CUDA runtime, not a local CUDA compiler.
+        import torch
+
+        if torch.version.cuda is None:
+            raise RuntimeError(f"[extension] The {self.name} kernel requires a CUDA-enabled PyTorch installation")
+        check_pytorch_version(MIN_PYTORCH_VERSION_MAJOR, MIN_PYTORCH_VERSION_MINOR)
+
+    def assert_build_compatible(self) -> None:
+        # Dispatch through the existing hook to retain custom hardware checks.
+        self.assert_compatible()
         from torch.utils.cpp_extension import CUDA_HOME
 
         if not CUDA_HOME:
             raise AssertionError(
-                "[extension] CUDA_HOME is not found. You need to export CUDA_HOME environment variable or install CUDA Toolkit first in order to build/load CUDA extensions"
+                "[extension] CUDA_HOME is not found. You need to export CUDA_HOME environment variable or install CUDA Toolkit first in order to build CUDA extensions"
             )
         check_system_pytorch_cuda_match(CUDA_HOME)
-        check_pytorch_version(MIN_PYTORCH_VERSION_MAJOR, MIN_PYTORCH_VERSION_MINOR)
 
     def get_cuda_home_include(self):
         """
