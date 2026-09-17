@@ -2,8 +2,8 @@
 
 环境要求:
 
-- PyTorch >= 2.1
-- Python >= 3.7
+- 2.2 <= PyTorch <= 2.5.1
+- Python >= 3.10
 - CUDA >= 11.0
 - [NVIDIA GPU Compute Capability](https://developer.nvidia.com/cuda-gpus) >= 7.0 (V100/RTX20 and higher)
 - Linux OS
