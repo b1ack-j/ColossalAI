@@ -134,6 +134,23 @@ class MyExtension(_Extension):
 
 ```
 
+### Loading checks and build checks
+
+`assert_compatible()` checks the hardware and runtime requirements of an
+extension. The loader calls it for both automatic and explicitly named
+selections. Keep custom hardware checks in this method.
+
+`assert_build_compatible()` adds requirements for compiling from source. Its
+default implementation calls `assert_compatible()`. CUDA extensions additionally
+check `CUDA_HOME`, `nvcc`, and the toolkit/PyTorch CUDA version match. The package
+build and the fallback to JIT call this method. A usable prebuilt CUDA extension
+does not require a local toolkit merely to pass the loader's checks.
+
+The C++/CUDA loader falls back to JIT only when the prebuilt module or its
+`colossalai._C` namespace is missing. Import errors from an existing extension,
+including missing shared libraries, undefined symbols, and missing Python
+dependencies, are reported without a silent rebuild.
+
 ## ✏️ Acknowledgement
 
 This module is written from scratch but we learnt a lot by looking into [DeepSpeed'

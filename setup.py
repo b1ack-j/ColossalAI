@@ -81,7 +81,7 @@ if BUILD_EXT:
     for ext_cls in ALL_EXTENSIONS:
         ext = ext_cls()
         if ext.support_aot and ext.is_available():
-            ext.assert_compatible()
+            ext.assert_build_compatible()
             op_names.append(ext.name)
             ext_modules.append(ext.build_aot())
 
