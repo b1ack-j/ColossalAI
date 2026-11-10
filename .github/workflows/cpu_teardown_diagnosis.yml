@@ -1,0 +1,119 @@
+name: Temporary CPU teardown diagnosis
+
+on:
+  push:
+    branches: [fix/cpu-ci-teardown-diagnosis]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: CPU teardown / ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: upstream
+            revision: da8f5c2dd56f97d3d23d3d222b114e1a3d4710f5
+          - variant: attention
+            revision: cd2aff5f3632b9f2dcd4e0957b5083b021314973
+          - variant: cleanup
+            revision: cd2aff5f3632b9f2dcd4e0957b5083b021314973
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      FAST_MODE: "1"
+      OMP_NUM_THREADS: "2"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.revision }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            setup.py
+            requirements/requirements.txt
+      - name: Install the original CPU CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          python -m pip install -r requirements/requirements.txt pytest
+          python -m pip install --no-deps -e .
+      - name: Prepare native backtrace and optional cleanup
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p diagnosis
+          python - <<'PY'
+          import os, platform, subprocess, sys
+          from pathlib import Path
+          import torch
+          print(sys.version, platform.platform(), torch.__version__, torch.cuda.is_available())
+          assert torch.__version__ == '2.5.1+cpu' and not torch.cuda.is_available()
+          Path('diagnosis/freeze.txt').write_text(subprocess.check_output([sys.executable,'-m','pip','freeze'],text=True))
+          Path('diagnosis/terminate.cpp').write_text('''#include <exception>
+          #include <execinfo.h>
+          #include <unistd.h>
+          #include <cstdlib>
+          static void dump() {
+            const char msg[] = "\\nCPU_DIAG_NATIVE_TERMINATE\\n";
+            write(2, msg, sizeof(msg)-1);
+            void* frames[64]; int n = backtrace(frames, 64);
+            backtrace_symbols_fd(frames, n, 2);
+            std::abort();
+          }
+          __attribute__((constructor)) static void install() { std::set_terminate(dump); }
+          ''')
+          if os.environ['VARIANT'] == 'cleanup':
+              p=Path('tests/kit/numerics/scenarios/data_parallel.py')
+              s=p.read_text().replace('import torch\n','import torch\nimport torch.distributed as dist\n',1)
+              start=s.index('    s = prepare(entry, micro_batches, seed)',s.index('def _run('))
+              end=s.index('\n\nclass _keep:',start)
+              body=s[start:end].rstrip()
+              s=s[:start]+'    try:\n'+''.join('    '+line+'\n' for line in body.splitlines())+'    finally:\n        dist.destroy_process_group()\n'+s[end:]
+              p.write_text(s)
+          Path('diagnosis/candidate.patch').write_text(subprocess.check_output(['git','diff'],text=True))
+          PY
+          g++ -shared -fPIC -g -o diagnosis/terminate.so diagnosis/terminate.cpp
+      - name: Run five independent attempts and preserve every result
+        run: |
+          export LD_PRELOAD="$PWD/diagnosis/terminate.so"
+          python - <<'PY'
+          import json, subprocess, sys, time
+          from pathlib import Path
+          results=[]
+          for i in range(1,6):
+              cmd=[sys.executable,'-m','pytest','-vv','-s','--tb=long','tests/test_numerics/test_numerics_data_parallel.py::test_unsynchronized_parameter_detected',f'--junitxml=diagnosis/attempt-{i}.xml']
+              with open(f'diagnosis/attempt-{i}.log','w') as log:
+                  r=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,timeout=180)
+              entry={'attempt':i,'exit_code':r.returncode};results.append(entry)
+              print(entry,flush=True)
+              if r.returncode: print(Path(f'diagnosis/attempt-{i}.log').read_text(),flush=True)
+              Path('diagnosis/repeats.json').write_text(json.dumps(results,indent=2))
+          PY
+      - name: Run complete CPU batch for cleanup candidate
+        if: matrix.variant == 'cleanup'
+        env:
+          COLOSSAL_RESULTS: ${{ github.workspace }}/diagnosis/full-cpu
+        run: bash .github/scripts/ci/run_colossalai_batch.sh cpu
+      - name: Report repeated-test failures
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows=json.loads(Path('diagnosis/repeats.json').read_text())
+          assert len(rows)==5 and all(r['exit_code']==0 for r in rows), rows
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cpu-teardown-${{ matrix.variant }}-${{ github.run_id }}
+          path: diagnosis
+          retention-days: 14
