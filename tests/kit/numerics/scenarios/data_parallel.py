@@ -20,6 +20,7 @@ import tempfile
 from typing import Callable, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 
 import colossalai
 from colossalai.booster.mixed_precision import MixedPrecision
@@ -103,12 +104,20 @@ def _run(
     role,
 ):
     colossalai.launch(rank=rank, world_size=world_size, host="localhost", port=port)
-    s = prepare(entry, micro_batches, seed)
-    trace = run_data_parallel(
-        s, plugin_fn(), micro_batches, mixed_precision, optimizer_fn, grad_seed, token_weighted, role=role
-    )
-    if rank == 0:
-        trace.save(path)
+    try:
+        s = prepare(entry, micro_batches, seed)
+        trace = run_data_parallel(
+            s, plugin_fn(), micro_batches, mixed_precision, optimizer_fn, grad_seed, token_weighted, role=role
+        )
+        if rank == 0:
+            trace.save(path)
+    finally:
+        # In torch 2.5, ProcessGroup can destroy Gloo while holding the GIL.
+        # Keep its Python wrapper alive so Gloo's destructor releases the GIL
+        # before joining workers that may still be releasing Python tensors.
+        gloo = dist.group.WORLD._get_backend(torch.device("cpu")) if dist.get_backend() == "gloo" else None
+        dist.destroy_process_group()
+        del gloo
 
 
 class _keep:

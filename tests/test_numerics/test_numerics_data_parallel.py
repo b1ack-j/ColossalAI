@@ -4,12 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 
 from colossalai.accelerator import get_accelerator
 from colossalai.booster.plugin import LowLevelZeroPlugin, TorchDDPPlugin
-from colossalai.testing import rerun_if_address_is_in_use
+from colossalai.testing import rerun_if_address_is_in_use, spawn
 from tests.kit.numerics import NumericsSpec, TokenLoss, judge_relative_bound, relative_bound
 from tests.kit.numerics.scenarios import data_parallel
 
@@ -42,6 +43,41 @@ def _identity(output):
 
 # module-level parts only: the entry is sent to spawned processes
 ENTRY = (TinyMLP, _data, _identity, None, _attribute(NumericsSpec()))
+
+
+def _failing_data():
+    raise RuntimeError("data preparation failed")
+
+
+def _check_worker_cleanup(rank, world_size, port, path, fail):
+    entry = (TinyMLP, _failing_data if fail else _data, *ENTRY[2:])
+    kwargs = dict(
+        rank=rank,
+        world_size=world_size,
+        port=port,
+        entry=entry,
+        plugin_fn=TorchDDPPlugin,
+        mixed_precision=None,
+        micro_batches=world_size,
+        seed=0,
+        grad_seed=0,
+        optimizer_fn=data_parallel.default_optimizer,
+        token_weighted=False,
+        path=path,
+        role="test",
+    )
+    if fail:
+        with pytest.raises(RuntimeError, match="data preparation failed"):
+            data_parallel._run(**kwargs)
+    else:
+        data_parallel._run(**kwargs)
+    assert not dist.is_initialized(), "numerical worker leaked its process group"
+
+
+@pytest.mark.parametrize("fail", [False, True])
+@rerun_if_address_is_in_use()
+def test_worker_releases_process_group(tmp_path, fail):
+    spawn(_check_worker_cleanup, 2, path=str(tmp_path / "trace.safetensors"), fail=fail)
 
 
 class UnsyncedDDPPlugin(TorchDDPPlugin):
