@@ -1,0 +1,118 @@
+name: Temporary numerical worker shutdown diagnosis
+
+on:
+  push:
+    branches: [fix/cpu-teardown-validation-20261116]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: CPU shutdown / ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: upstream
+            revision: 297c8cf6d91cb0bff795cba961d3aea1e66fa370
+          - variant: attention
+            revision: 46c9ef107f412ffe9e438bd7c4ee0f91dbacdf62
+          - variant: fixed
+            revision: 46c9ef107f412ffe9e438bd7c4ee0f91dbacdf62
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      FAST_MODE: "1"
+      OMP_NUM_THREADS: "2"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: hpcaitech/ColossalAI
+          ref: ${{ matrix.revision }}
+      - name: Apply the independent fix to the PR merge
+        if: matrix.variant == 'fixed'
+        run: |
+          git fetch https://github.com/b1ack-j/ColossalAI.git 3e1a7faf978cbbbd8907eb5968dbc2080fe794b4 --depth=2
+          git diff 3e1a7faf^ 3e1a7faf -- tests/kit/numerics/scenarios/data_parallel.py tests/test_numerics/test_numerics_data_parallel.py > /tmp/worker-fix.patch
+          git apply /tmp/worker-fix.patch
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Install original CPU gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          python -m pip install -r requirements/requirements.txt pytest
+          python -m pip install --no-deps -e .
+      - name: Record environment and native backtraces
+        run: |
+          mkdir -p diagnosis
+          python - <<'PY'
+          import platform, subprocess, sys
+          from pathlib import Path
+          import torch
+          print(sys.version, platform.platform(), torch.__version__)
+          assert torch.__version__ == '2.5.1+cpu' and not torch.cuda.is_available()
+          Path('diagnosis/freeze.txt').write_text(subprocess.check_output([sys.executable,'-m','pip','freeze'],text=True))
+          Path('diagnosis/candidate.patch').write_text(subprocess.check_output(['git','diff'],text=True))
+          Path('diagnosis/terminate.cpp').write_text('''#include <exception>
+          #include <execinfo.h>
+          #include <unistd.h>
+          #include <cstdlib>
+          static void dump() {
+            const char msg[] = "\\nCPU_DIAG_NATIVE_TERMINATE\\n";
+            write(2, msg, sizeof(msg)-1);
+            void* frames[64]; int n = backtrace(frames, 64);
+            backtrace_symbols_fd(frames, n, 2);
+            std::abort();
+          }
+          __attribute__((constructor)) static void install() { std::set_terminate(dump); }
+          ''')
+          PY
+          g++ -shared -fPIC -g -o diagnosis/terminate.so diagnosis/terminate.cpp
+      - name: Five independent attempts, preserving failures
+        run: |
+          export LD_PRELOAD="$PWD/diagnosis/terminate.so"
+          python - <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+          rows=[]
+          for i in range(1,6):
+              cmd=['timeout','--signal=TERM','--kill-after=10s','120s',sys.executable,'-m','pytest','-vv','--tb=long',
+                   'tests/test_numerics/test_numerics_data_parallel.py::test_micro_batch_without_tokens',
+                   'tests/test_numerics/test_numerics_data_parallel.py::test_unsynchronized_parameter_detected',
+                   f'--junitxml=diagnosis/attempt-{i}.xml']
+              with open(f'diagnosis/attempt-{i}.log','w') as log:
+                  code=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,timeout=140).returncode
+              row={'attempt':i,'exit_code':code}; rows.append(row)
+              Path('diagnosis/repeats.json').write_text(json.dumps(rows,indent=2))
+              print(row,flush=True)
+              if code: print(Path(f'diagnosis/attempt-{i}.log').read_text(),flush=True)
+          PY
+      - name: Complete related distributed tests
+        if: matrix.variant == 'fixed'
+        run: python -m pytest -v --tb=short tests/test_numerics/test_numerics_data_parallel.py --junitxml=diagnosis/distributed.xml
+      - name: Complete Fork-safe CPU gate with fix
+        if: matrix.variant == 'fixed'
+        env:
+          COLOSSAL_RESULTS: ${{ github.workspace }}/diagnosis/full-cpu
+        run: bash .github/scripts/ci/run_cpu_unit_tests.sh
+      - name: Preserve repeat outcome
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows=json.loads(Path('diagnosis/repeats.json').read_text())
+          assert len(rows)==5 and all(r['exit_code']==0 for r in rows), rows
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cpu-shutdown-${{ matrix.variant }}-${{ github.run_id }}
+          path: diagnosis
+          retention-days: 14
